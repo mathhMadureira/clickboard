@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  APPROVED
+  REFUNDED
+}
+
+model User {
+  id        String    @id @default(cuid())
+  name      String
+  email     String    @unique
+  password  String
+  role      Role      @default(USER)
+  accounts  Account[]
+  createdAt DateTime  @default(now())
+}
+
+model Account {
+  id        String    @id @default(cuid())
+  platform  String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  orders    Order[]
+  adspends  Adspend[] // <— inverso de Adspend.account
+  expenses  Expense[] // <— inverso de Expense.account
+  createdAt DateTime  @default(now())
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  accountId  String
+  account    Account     @relation(fields: [accountId], references: [id])
+  status     OrderStatus
+  amountNet  Float
+  occurredAt DateTime    @default(now())
+}
+
+model Adspend {
+  id        String   @id @default(cuid())
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id])
+  date      DateTime
+  amount    Float
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id])
+  date      DateTime
+  amount    Float
+  note      String?
+}

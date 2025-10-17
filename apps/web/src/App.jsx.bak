@@ -1,0 +1,255 @@
+import { useMemo, useState } from "react";
+import Layout from "./components/Layout";
+import Pills from "./components/Pills";
+import KpiCard from "./components/KpiCard";
+import Table from "./components/Table";
+
+const API = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+const fmt = (n) => (n || n === 0) ? (typeof n === 'number' ? n.toLocaleString('pt-BR') : n) : "—";
+const fmtPct = (r) => (Number.isFinite(r) || r === 0) ? new Intl.NumberFormat('pt-BR',{style:'percent',minimumFractionDigits:1,maximumFractionDigits:1}).format(r) : '—';
+const roasRatio = (s) => (s && Number(s.gastosAds) > 0) ? (Number(s.faturamento)/Number(s.gastosAds)) : 0;
+
+// aceita "YYYY-MM-DD" ou "DD/MM/YYYY" e devolve "YYYY-MM-DD"
+function toISODate(s) {
+  if (!s) return new Date().toISOString().slice(0,10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  const d = new Date(s);
+  if (!isNaN(d)) return d.toISOString().slice(0,10);
+  return new Date().toISOString().slice(0,10);
+}
+
+export default function App(){
+  const [email, setEmail] = useState("dev@example.com");
+  const [password, setPassword] = useState("dev123456");
+  const [token, setToken] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0,10));
+  const [periodKey, setPeriodKey] = useState("hoje");
+  const [section, setSection] = useState('dashboard'); // dashboard | orders | spend | settings
+
+  const [summary, setSummary] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [adspend, setAdspend] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  // útil para exibir "Logado", mas NÃO usar para requisições logo após o login
+  const headers = useMemo(() => token ? { Authorization: `Bearer ${token}` } : {}, [token]);
+
+  async function ensureToken(){
+    if (token) return token;
+    const res = await fetch(`${API}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(()=> "");
+      throw new Error(`Login ${res.status} ${text}`);
+    }
+    const data = await res.json();
+    setToken(data.access_token);
+    return data.access_token; // <- sempre usar o retorno nas chamadas subsequentes
+  }
+
+  function setPreset(key){
+    setPeriodKey(key);
+    const base = new Date();
+    if (key === 'ontem') base.setDate(base.getDate()-1);
+    if (key === '7d') base.setDate(base.getDate()-6);
+    if (key === '30d') base.setDate(base.getDate()-29);
+    setDate(base.toISOString().slice(0,10));
+  }
+
+  async function loadSummary(){
+    setErr(""); setLoading(true);
+    try{
+      const tok = await ensureToken();
+      const auth = { Authorization: `Bearer ${tok}` };
+      const qs = new URLSearchParams();
+      qs.set("date", toISODate(date));
+      if (accountId) qs.set("accountId", accountId);
+      const res = await fetch(`${API}/dashboard/summary?`+qs.toString(), { headers: auth });
+      if (!res.ok) {
+        const t = await res.text().catch(()=> "");
+        throw new Error(`Summary ${res.status} ${t}`);
+      }
+      setSummary(await res.json());
+    }catch(e){ setErr(e.message || "Falha ao buscar"); setSummary(null); }
+    finally{ setLoading(false); }
+  }
+
+  async function loadOrders(){
+    setErr(""); setLoading(true);
+    try{
+      const tok = await ensureToken();
+      const auth = { Authorization: `Bearer ${tok}` };
+      const qs = new URLSearchParams();
+      qs.set("date", toISODate(date));
+      if (accountId) qs.set("accountId", accountId);
+      const res = await fetch(`${API}/orders?`+qs.toString(), { headers: auth });
+      if (!res.ok) {
+        const t = await res.text().catch(()=> "");
+        throw new Error(`Orders ${res.status} ${t}`);
+      }
+      setOrders(await res.json());
+    }catch(e){ setErr(e.message || "Falha ao buscar"); setOrders([]); }
+    finally{ setLoading(false); }
+  }
+
+  async function loadSpend(){
+    setErr(""); setLoading(true);
+    try{
+      const tok = await ensureToken();
+      const auth = { Authorization: `Bearer ${tok}` };
+      const qs = new URLSearchParams();
+      qs.set("date", toISODate(date));
+      if (accountId) qs.set("accountId", accountId);
+      const [adsRes, expRes] = await Promise.all([
+        fetch(`${API}/adspend?`+qs.toString(), { headers: auth }),
+        fetch(`${API}/expenses?`+qs.toString(), { headers: auth }),
+      ]);
+      if (!adsRes.ok) {
+        const t = await adsRes.text().catch(()=> "");
+        throw new Error(`Adspend ${adsRes.status} ${t}`);
+      }
+      if (!expRes.ok) {
+        const t = await expRes.text().catch(()=> "");
+        throw new Error(`Expenses ${expRes.status} ${t}`);
+      }
+      setAdspend(await adsRes.json());
+      setExpenses(await expRes.json());
+    }catch(e){ setErr(e.message || "Falha ao buscar"); setAdspend([]); setExpenses([]); }
+    finally{ setLoading(false); }
+  }
+
+  async function loadAccounts(){
+    setErr(""); setLoading(true);
+    try{
+      const tok = await ensureToken();
+      const auth = { Authorization: `Bearer ${tok}` };
+      const res = await fetch(`${API}/accounts`, { headers: auth });
+      if (!res.ok) {
+        const t = await res.text().catch(()=> "");
+        throw new Error(`Accounts ${res.status} ${t}`);
+      }
+      setAccounts(await res.json());
+    }catch(e){ setErr(e.message || "Falha ao buscar"); setAccounts([]); }
+    finally{ setLoading(false); }
+  }
+
+  const logged = !!token;
+
+  return (
+    <Layout logged={logged} section={section} onSectionChange={setSection}>
+      {/* header de controle */}
+      <div className="controls">
+        <input className="input" placeholder="dev@example.com" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <input className="input" type="password" placeholder="senha" value={password} onChange={e=>setPassword(e.target.value)}/>
+        <button className="btn" onClick={async()=>{ setErr(""); try{ await ensureToken(); }catch(e){ setErr(e.message);} }}>
+          {logged ? "Logado" : "Conecte-se"}
+        </button>
+      </div>
+
+      {/* filtros */}
+      <div className="filters">
+        <input className="input" placeholder="accountId (ex: acct-demo, acct-store-b)" value={accountId} onChange={e=>setAccountId(e.target.value)}/>
+        <input className="input" value={date} onChange={e=>setDate(e.target.value)} />
+        <div className="pills">
+          <Pills active={periodKey} onChange={(k)=>setPreset(k)} items={[
+            { key:'hoje', label:'Hoje'},
+            { key:'ontem', label:'Ontem'},
+            { key:'7d', label:'7 dias'},
+            { key:'30d', label:'30 dias'},
+          ]}/>
+        </div>
+      </div>
+
+      {/* ações por seção */}
+      <div style={{display:'flex', gap:12, flexWrap:'wrap', margin:'8px 0'}}>
+        {section==='dashboard' && <button className="btn" onClick={loadSummary}>{loading ? "Carregando..." : "Carregar resumo"}</button>}
+        {section==='orders' && <button className="btn" onClick={loadOrders}>{loading ? "Carregando..." : "Atualizar"}</button>}
+        {section==='spend' && <button className="btn" onClick={loadSpend}>{loading ? "Carregando..." : "Atualizar"}</button>}
+        {section==='settings' && <button className="btn" onClick={loadAccounts}>{loading ? "Carregando..." : "Recarregar"}</button>}
+      </div>
+
+      {/* erro global */}
+      {err && <div className="card" style={{border:'1px solid var(--bad)', color:'var(--bad)'}}>Falha ao buscar — {err}</div>}
+
+      {/* conteúdo por seção */}
+      {section==='dashboard' && (
+        <>
+          <div className="grid">
+            <KpiCard label="Período" value={summary?.period ?? toISODate(date)} />
+            <KpiCard label="Faturamento" value={fmt(summary?.faturamento)} />
+            <KpiCard label="Anúncios Gastos" value={fmt(summary?.gastosAds)} />
+          </div>
+          <div className="grid">
+            <KpiCard label="Despesas" value={fmt(summary?.despesas)} />
+            <KpiCard label="Lucro" value={fmt(summary?.lucro)} tone="ok" />
+            <KpiCard label="ROAS" value={fmt(summary?.roas)} />
+          </div>
+          <div className="grid">
+            <KpiCard label="Pingentes" value={fmt(summary?.pendentes)} />
+            <KpiCard label="Reembolsadas" value={fmt(summary?.reembolsadas)} />
+          </div>
+          {!summary && !loading && <div className="muted">Carregue o resumo para ver os KPIs.</div>}
+        </>
+      )}
+
+      {section==='orders' && (
+        <Table
+          columns={[
+            {key:'id', header:'ID'},
+            {key:'accountId', header:'Conta'},
+            {key:'status', header:'Status'},
+            {key:'amountNet', header:'Valor líquido', render:(v)=>fmt(v)},
+            {key:'occurredAt', header:'Data', render:(v)=> new Date(v).toLocaleString('pt-BR')},
+          ]}
+          rows={orders}
+        />
+      )}
+
+      {section==='spend' && (
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+          <Table
+            columns={[
+              {key:'id', header:'ID'},
+              {key:'accountId', header:'Conta'},
+              {key:'amount', header:'Adspend (R$)', render:(v)=>fmt(v)},
+              {key:'date', header:'Data', render:(v)=> new Date(v).toLocaleDateString('pt-BR')},
+            ]}
+            rows={adspend}
+          />
+          <Table
+            columns={[
+              {key:'id', header:'ID'},
+              {key:'accountId', header:'Conta'},
+              {key:'amount', header:'Despesa (R$)', render:(v)=>fmt(v)},
+              {key:'note', header:'Nota'},
+              {key:'date', header:'Data', render:(v)=> new Date(v).toLocaleDateString('pt-BR')},
+            ]}
+            rows={expenses}
+          />
+        </div>
+      )}
+
+      {section==='settings' && (
+        <Table
+          columns={[
+            {key:'id', header:'AccountId'},
+            {key:'platform', header:'Plataforma'},
+            {key:'user', header:'Usuário', render:(_,r)=> r.user?.name ?? '—'},
+            {key:'createdAt', header:'Criado em', render:(v)=> new Date(v).toLocaleString('pt-BR')},
+          ]}
+          rows={accounts}
+        />
+      )}
+    </Layout>
+  );
+}
