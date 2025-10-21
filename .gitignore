@@ -1,0 +1,18 @@
+# Dependências
+node_modules/
+apps/*/node_modules/
+.pnpm-store/
+
+# Builds
+dist/
+build/
+apps/*/dist/
+apps/*/build/
+
+# Ambiente
+.env
+apps/*/.env
+
+# Diversos
+.DS_Store
+*.log
